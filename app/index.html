@@ -91,7 +91,7 @@
   <h1>🏗️ Панель ГИП</h1>
   <div class="header-right">
     <select id="projectSwitcher"></select>
-<button class="btn ghost" id="projectInfoBtn" style="background:rgba(255,255,255,.18);color:#fff;border-color:rgba(255,255,255,.4);padding:8px 12px">📌 Инфо о проекте</button>
+<button class="btn ghost" id="projectInfoBtn" style="background:rgba(255,255,255,.18);color:#fff;border-color:rgba(255,255,255,.4);padding:8px 12px">➕ Создать проект</button>
 <dialog id="projectInfoDialog" class="wide">
   <h2 id="projectInfoTitle">📌 Инфо о проекте</h2>
   <div id="projectInfoContent"></div>
@@ -106,10 +106,10 @@
   <button class="active" data-tab="dash">📊 Дашборд</button>
   <button data-tab="tasks">✅ Задачи</button>
   <button data-tab="risks">⚠️ Риски</button>
-  <button data-tab="plan">📅 Календарный план</button>
-  <button data-tab="tz">📋 ТЗ</button>
+  <button data-tab="case">📁 Дело</button>
   <button data-tab="letters">✉️ Письма</button>
   <button data-tab="docs">📁 Документы</button>
+  <button data-tab="user">👤 Пользователь</button>
   <button data-tab="team">👥 Команда</button>
   <button data-tab="settings">⚙️ Настройки</button>
 </nav>
@@ -253,27 +253,9 @@
 /* ============ STATE ============ */
 const STORAGE_KEY = 'gip-panel-v4';
 const defaultState = {
-  projects: [{ id:'p1', name:'Реконструкция цеха №3', budgetPlan:120, budgetFact:87, schedulePlan:100, scheduleFact:62, gipId:'u1' }],
-  activeProjectId:'p1', currentUserId:'u1',
-  users:[
-    { id:'u1', name:'Иван Петров', role:'gip', email:'ivan@example.com',
-      executorName:'И.И. Иванов', executorTitle:'ГИП',
-      executorPhone:'+7 000 000-00-00', executorEmail:'engineer@example.com' },
-    { id:'u2', name:'Мария Иванова', role:'assistant', email:'maria@example.com',
-      executorName:'М.И. Иванова', executorTitle:'Инженер',
-      executorPhone:'+7 000 000-00-00', executorEmail:'maria@example.com' },
-  ],
-  tasks:[
-    { id:'t1', projectId:'p1', title:'Согласовать КМД', status:'in_progress', due:'2026-07-15', assignee:'u2', tag:'Проектирование' },
-    { id:'t2', projectId:'p1', title:'Экспертиза проекта', status:'todo', due:'2026-08-01', assignee:'u1', tag:'Согласования' },
-    { id:'t3', projectId:'p1', title:'Закупка металлоконструкций', status:'done', due:'2026-06-20', assignee:'u2', tag:'Закупки' },
-  ],
-  risks:[
-    { id:'r1', projectId:'p1', title:'Задержка поставки крана', level:'high', owner:'u1' },
-    { id:'r2', projectId:'p1', title:'Изменение ТЗ заказчиком', level:'mid', owner:'u2' },
-  ],
-  letters:[],
-  docs:[{ id:'d1', projectId:'p1', name:'ПЗ-01_Пояснительная_записка.pdf', version:'v2.1', date:'2026-05-10' }],
+  projects: [], activeProjectId:null, currentUserId:'u1',
+  users:[{id:'u1',name:'Пользователь',role:'gip',email:'',executorName:'',executorTitle:'',executorPhone:'',executorEmail:''}],
+  tasks:[], risks:[], letters:[], docs:[],
   calendarPlans: {},
   tzFindings: {},
   projectInfo: {},
@@ -311,6 +293,7 @@ function todayISO(){ return new Date().toISOString().slice(0,10); }
 /* ============ DASHBOARD ============ */
 tabs.dash = function(){
   const p = activeProject();
+  if(!p){content.innerHTML='<div class="card"><h3>Добро пожаловать</h3><p>Создайте первый проект или начните вести задачи.</p></div>';return;}
   const tasks = state.tasks.filter(t=>t.projectId===p.id && !t.isNote);
   const risks = state.risks.filter(r=>r.projectId===p.id);
   const openTasks = tasks.filter(t=>t.status!=='done').length;
@@ -372,7 +355,7 @@ tabs.dash = function(){
 /* ============ TASKS ============ */
 tabs.tasks = function(){
   const p = activeProject();
-  const tasks = state.tasks.filter(t=>t.projectId===p.id);
+  const tasks = state.tasks.filter(t=>t.projectId===(p?.id||null));
   const cols = [{key:'todo',title:'К выполнению'},{key:'in_progress',title:'В работе'},{key:'done',title:'Готово'}];
   content.innerHTML = `
     <div class="toolbar">${can('editTasks')?'<button class="btn" id="addTaskBtn">+ Новая задача</button>':''}</div>
@@ -784,6 +767,20 @@ tabs.docs = function(){
     } catch(err){
       console.warn(err);
     }
+  };
+};
+
+/* ============ USER ============ */
+tabs.user = function(){
+  content.innerHTML = `<div class="card"><h3>Данные пользователя</h3><label>ФИО</label><input id="selfName"><label>Должность</label><input id="selfTitle"><div class="actions"><button class="btn" id="selfSave">Сохранить</button></div></div>`;
+  const u=currentUser();
+  document.getElementById('selfName').value=u.name||'';
+  document.getElementById('selfTitle').value=u.executorTitle||'';
+  document.getElementById('selfSave').onclick=()=>{
+    const name=document.getElementById('selfName').value.trim();
+    if(!name) return alert('Введите ФИО');
+    u.name=name; u.executorTitle=document.getElementById('selfTitle').value.trim();
+    saveState(); document.getElementById('currentUser').textContent=`Пользователь: ${u.name}`; alert('Сохранено');
   };
 };
 
@@ -1233,15 +1230,10 @@ tabs.settings = function(){
   document.getElementById('importBtn').onclick = ()=>document.getElementById('importFile').click();
   document.getElementById('importFile').onchange = async (e)=>{
     const f = e.target.files[0]; if(!f) return;
-    try{ const imported=JSON.parse(await f.text()); const next=imported.format==='gip-panel-backup'?imported.state:imported; if(!next || !Array.isArray(next.projects) || !next.projects.length || !Array.isArray(next.users) || !Array.isArray(next.tasks) || !Array.isArray(next.risks) || !Array.isArray(next.letters) || !Array.isArray(next.docs) || !next.calendarPlans || !next.tzFindings) throw new Error('Файл не похож на резервную копию панели'); if(!next.projectInfo) next.projectInfo=next.rojectInfo||{}; if(imported.format==='gip-panel-backup'){ for(const key of ['letterTemplateB64','headerFooterB64']){ if(imported[key]===null || imported[key]===undefined) localStorage.removeItem(key); else if(typeof imported[key]==='string') localStorage.setItem(key,imported[key]); else throw new Error('Некорректный шаблон письма'); }} state=next; saveState(); renderAll(); }
+    try{ const imported=JSON.parse(await f.text()); const next=imported.format==='gip-panel-backup'?imported.state:imported; if(!next || !Array.isArray(next.projects) || !Array.isArray(next.users) || !Array.isArray(next.tasks) || !Array.isArray(next.risks) || !Array.isArray(next.letters) || !Array.isArray(next.docs) || !next.calendarPlans || !next.tzFindings) throw new Error('Файл не похож на резервную копию панели'); if(!next.projectInfo) next.projectInfo=next.rojectInfo||{}; if(imported.format==='gip-panel-backup'){ for(const key of ['letterTemplateB64','headerFooterB64']){ if(imported[key]===null || imported[key]===undefined) localStorage.removeItem(key); else if(typeof imported[key]==='string') localStorage.setItem(key,imported[key]); else throw new Error('Некорректный шаблон письма'); }} state=next; saveState(); renderAll(); }
     catch(err){ alert('Ошибка: '+err.message); }
   };
-  if(can('editProjects')) document.getElementById('addProjectBtn').onclick = ()=>{
-    const name = prompt('Название проекта:'); if(!name) return;
-    const gipId = state.users.find(u=>u.role==='gip')?.id||state.currentUserId;
-    state.projects.push({id:uid('p'),name,budgetPlan:0,budgetFact:0,schedulePlan:100,scheduleFact:0,gipId});
-    saveState(); tabs.settings();
-  };
+  if(can('editProjects')) document.getElementById('addProjectBtn').onclick = createProjectDialog;
   document.getElementById('defaultSignFile').onchange = async (e)=>{
     const f = e.target.files[0]; if(!f) return;
     state.defaultSignature = await fileToBase64(f);
@@ -1275,6 +1267,8 @@ content.addEventListener('click',e=>{
     state.risks = state.risks.filter(r=>r.projectId!==pid);
     state.letters = state.letters.filter(l=>l.projectId!==pid);
     state.docs = state.docs.filter(x=>x.projectId!==pid);
+    if(state.caseFiles) delete state.caseFiles[pid];
+    delete state.projectInfo[pid];
     delete state.calendarPlans[pid];
     delete state.tzFindings[pid];
     if(state.activeProjectId===pid) state.activeProjectId = state.projects[0]?.id;
@@ -1292,16 +1286,53 @@ document.querySelectorAll('nav button').forEach(b=>{
 });
 function renderProjectSwitcher(){
   const sel = document.getElementById('projectSwitcher');
+  sel.hidden = !state.projects.length;
   sel.innerHTML = state.projects.map(p=>`<option value="${p.id}" ${p.id===state.activeProjectId?'selected':''}>${p.name}</option>`).join('');
   sel.onchange = ()=>{ state.activeProjectId = sel.value; saveState(); renderAll(); };
 }
 function renderAll(){
   document.getElementById('currentUser').textContent = `${currentUser().role==='gip'?'ГИП':'Пользователь'}: ${currentUser().name}`;
   renderProjectSwitcher();
+  document.querySelectorAll('nav button').forEach(b=>b.disabled=!state.projects.length&&!['dash','tasks','user'].includes(b.dataset.tab));
   document.querySelectorAll('nav button').forEach(x=>x.classList.remove('active'));
   document.querySelector('nav button[data-tab="dash"]').classList.add('active');
   tabs.dash();
 }
+function safeText(v){const e=document.createElement('div');e.textContent=String(v||'');return e.innerHTML;}
+async function readCaseFile(f){
+  if(/\.docx$/i.test(f.name)) return (await mammoth.extractRawText({arrayBuffer:await f.arrayBuffer()})).value;
+  if(/\.pdf$/i.test(f.name)) return await extractPdfText(f);
+  if(/\.txt$/i.test(f.name)) return await f.text();
+  throw new Error('Поддерживаются DOCX, PDF и TXT');
+}
+function guessProject(text){
+  const lines=text.split(/\n+/).map(x=>x.trim()).filter(Boolean);
+  const lineAfter=(pattern)=>{let i=lines.findIndex(x=>pattern.test(x));if(i<0)return '';let tail=lines[i].replace(pattern,'').replace(/^\s*[:\-–]+\s*/,'').trim();return (tail||lines[i+1]||'').slice(0,300);};
+  const name=lineAfter(/^(?:наименование объекта(?: строительства)?|наименование объекта проектирования)\s*/i)||((text.match(/(?:по объекту|по лоту)\s*[:：]\s*[«"“]?([^\n»”"]{8,200})/i)||[])[1]||'').trim() || lineAfter(/^задание на проектирование\s*$/i);
+  const customer=lineAfter(/^заказчик(?:\s*[:：]\s*|\s*$)/i);
+  const kind=(text.match(/техническо(?:е|го) перевооружение|реконструкци[яию]|капитальн(?:ый|ого) ремонт|новое строительство/i)||[])[0]||'';
+  const exp=(text.match(/[^\n.]{0,80}(?:экспертиз[аы]|экспертизы)[^\n.]{0,100}/ig)||[]).slice(0,3).join('; ');
+  const sections=[];if(/проектн(?:ая|ой|ую) документаци/i.test(text))sections.push('ПД');if(/рабоч(?:ая|ей|ую) документаци/i.test(text))sections.push('РД');if(/инженерн(?:ые|ых|ыми) изыскани/i.test(text))sections.push('ИИ');if(/\bОТР\b/.test(text))sections.push('ОТР');
+  return {name,customer,kind,exp,sections:sections.join(', ')};
+}
+async function createProjectDialog(){
+ const d=document.createElement('dialog');d.className='wide';d.innerHTML=`<h2>Создать проект</h2><p>Заполните поля или загрузите ТЗ. Проверьте найденные данные перед сохранением.</p><label>Задание на проектирование (DOCX, PDF, TXT)</label><input type="file" id="newProjectFile" accept=".docx,.pdf,.txt"><p id="newProjectStatus"></p><label>Наименование объекта</label><input id="newObject"><label>Краткое название проекта</label><input id="newShort"><label>Заказчик</label><input id="newCustomer"><label>Вид строительства</label><select id="newKind"><option></option><option>Новое строительство</option><option>Реконструкция</option><option>Капитальный ремонт</option><option>Техническое перевооружение</option></select><label>Суть проекта</label><textarea id="newSummary"></textarea><label>Экспертизы</label><textarea id="newExpertise"></textarea><label>Разделы документации (ПД, РД, ОТР, ИИ)</label><input id="newSections"><div class="actions"><button class="btn ghost" id="newCancel">Отмена</button><button class="btn" id="newSave">Создать</button></div>`;document.body.appendChild(d);let imported=null;
+ d.querySelector('#newCancel').onclick=()=>d.close();d.onclose=()=>d.remove();
+ d.querySelector('#newProjectFile').onchange=async e=>{const f=e.target.files[0];if(!f)return;try{d.querySelector('#newProjectStatus').textContent='Чтение документа…';const text=await readCaseFile(f);if(!text.trim())throw new Error('Текст не найден: возможно, документ является сканом');imported={id:uid('f'),name:f.name,text};const x=guessProject(text);for(const [key,id] of [['name','newObject'],['customer','newCustomer'],['exp','newExpertise'],['sections','newSections']])if(x[key])d.querySelector('#'+id).value=x[key];if(x.kind){let opts=[...d.querySelector('#newKind').options];let o=opts.find(o=>o.value.toLowerCase().startsWith(x.kind.toLowerCase().slice(0,8)));if(o)d.querySelector('#newKind').value=o.value;}d.querySelector('#newProjectStatus').textContent='Текст прочитан. Проверьте предлагаемые поля.';}catch(err){imported=null;d.querySelector('#newProjectStatus').textContent='Ошибка: '+err.message;}};
+ d.querySelector('#newSave').onclick=()=>{let object=d.querySelector('#newObject').value.trim(),short=d.querySelector('#newShort').value.trim();if(!object&&!short)return alert('Введите наименование объекта или краткое название');const id=uid('p');state.projects.push({id,name:short||object,objectName:object,customer:d.querySelector('#newCustomer').value.trim(),constructionType:d.querySelector('#newKind').value,summary:d.querySelector('#newSummary').value.trim(),expertise:d.querySelector('#newExpertise').value.trim(),documentation:d.querySelector('#newSections').value.trim(),budgetPlan:0,budgetFact:0,schedulePlan:100,scheduleFact:0,gipId:state.currentUserId});state.activeProjectId=id;state.caseFiles=state.caseFiles||{};state.caseFiles[id]={tz:imported?[imported]:[],plan:[],contract:[],agreements:[]};try{saveState();}catch(e){state.projects.pop();delete state.caseFiles[id];state.activeProjectId=state.projects[0]?.id||null;return alert('Не удалось сохранить: '+e.message);}d.close();renderAll();};d.showModal();
+}
+let caseTab='tz';
+tabs.case=function(){
+ const p=activeProject();state.caseFiles=state.caseFiles||{};const files=state.caseFiles[p.id]||(state.caseFiles[p.id]={tz:[],plan:[],contract:[],agreements:[]});const names={tz:'Задание на проектирование',plan:'Календарный план',contract:'Договор',agreements:'Дополнительные соглашения'};
+ content.innerHTML=`<div class="toolbar">${Object.entries(names).map(([k,v])=>`<button class="btn ${caseTab===k?'':'ghost'}" data-case-tab="${k}">${v}</button>`).join('')}</div><div class="card"><label>Общий поиск по делу</label><input id="caseGlobal" placeholder="Введите текст"><div id="caseGlobalResult"></div></div><div class="card" style="margin-top:12px"><h3>${names[caseTab]}</h3><input type="file" id="caseUpload" accept=".docx,.pdf,.txt" ${caseTab==='agreements'?'multiple':''}><p>Поддерживаются DOCX, PDF с текстом и TXT. Сканированные документы требуют распознавания текста.</p><label>Поиск в этом разделе</label><input id="caseLocal" placeholder="Введите текст"><div id="caseList"></div>${caseTab==='plan'?'<button class="btn ghost" id="casePlan">Открыть редактор календарного плана</button>':''}</div>`;
+ content.querySelectorAll('[data-case-tab]').forEach(b=>b.onclick=()=>{caseTab=b.dataset.caseTab;tabs.case();});
+ const render=()=>{const q=document.getElementById('caseLocal').value.toLowerCase();document.getElementById('caseList').innerHTML=(files[caseTab]||[]).map(f=>{let text=f.text||'';let pos=q?text.toLowerCase().indexOf(q):-1;return `<div class="card"><b>${safeText(f.name)}</b> <button class="btn ghost" data-case-remove="${f.id}">Удалить</button>${q?(pos<0?'<p>Совпадений нет</p>':`<p>Первое совпадение: ${safeText(text.slice(Math.max(0,pos-100),pos+q.length+100))}</p>`):''}<pre style="white-space:pre-wrap;max-height:420px;overflow:auto;font:inherit">${safeText(text)}</pre></div>`;}).join('')||'<p>Документы не загружены</p>';};
+ document.getElementById('caseLocal').oninput=render;render();
+ document.getElementById('caseGlobal').oninput=e=>{let q=e.target.value.trim().toLowerCase();let out=[];if(q)for(const [k,arr] of Object.entries(files))for(const f of arr){let i=f.text.toLowerCase().indexOf(q);if(i>=0)out.push(`<p><b>${safeText(names[k])}: ${safeText(f.name)}</b> — ${safeText(f.text.slice(Math.max(0,i-80),i+q.length+80))}</p>`);}document.getElementById('caseGlobalResult').innerHTML=q?(out.join('')||'Ничего не найдено'):'';};
+ document.getElementById('caseUpload').onchange=async e=>{for(const f of e.target.files){try{let text=await readCaseFile(f);if(!text.trim())throw Error('Текст не извлечён');const item={id:uid('f'),name:f.name,text};let old=[...files[caseTab]];files[caseTab]=caseTab==='agreements'?[...old,item]:[item];try{saveState();}catch(err){files[caseTab]=old;throw err;}}catch(err){alert('Не удалось загрузить '+f.name+': '+err.message);}}tabs.case();};
+ content.querySelector('#caseList').onclick=e=>{const id=e.target.dataset.caseRemove;if(!id)return;if(!confirm('Удалить документ из дела?'))return;files[caseTab]=files[caseTab].filter(f=>f.id!==id);saveState();tabs.case();};if(caseTab==='plan')document.getElementById('casePlan').onclick=()=>tabs.plan();
+};
+
 /* ============ ИНФО О ПРОЕКТЕ ============ */
 function openProjectInfo(){
   const p = activeProject();
@@ -1336,7 +1367,7 @@ function openProjectInfo(){
   }
   document.getElementById('projectInfoDialog').showModal();
 }
-document.getElementById('projectInfoBtn').onclick = openProjectInfo;
+document.getElementById('projectInfoBtn').onclick = createProjectDialog;
 renderAll();
 </script>
 
