@@ -1,0 +1,31 @@
+{
+  "name": "gip-panel-portable",
+  "version": "1.0.0",
+  "description": "Портативная панель ГИП",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "prepare:vendor": "node prepare-vendor.js",
+    "start": "npm run prepare:vendor && electron .",
+    "build:win": "npm run prepare:vendor && electron-builder --win portable --x64"
+  },
+  "dependencies": {
+    "docx-templates": "4.11.0",
+    "jszip": "3.10.1",
+    "mammoth": "1.6.0",
+    "pdfjs-dist": "3.11.174"
+  },
+  "devDependencies": {
+    "electron": "32.3.3",
+    "electron-builder": "25.1.8",
+    "esbuild": "0.24.2"
+  },
+  "build": {
+    "appId": "ru.gippanel.portable",
+    "productName": "Панель ГИП",
+    "files": ["main.js", "app/**/*"],
+    "directories": {"output": "dist"},
+    "win": {"target": ["portable"], "signAndEditExecutable": false},
+    "portable": {"artifactName": "GIP-Panel-Portable-${version}.${ext}"}
+  }
+}
