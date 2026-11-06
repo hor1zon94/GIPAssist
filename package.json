@@ -23,7 +23,7 @@
   "build": {
     "appId": "ru.gippanel.portable",
     "productName": "Панель ГИП",
-    "files": ["main.js", "app/**/*"],
+    "files": ["main.js", "preload.js", "app/**/*"],
     "directories": {"output": "dist"},
     "win": {"target": ["portable"], "signAndEditExecutable": false},
     "portable": {"artifactName": "GIP-Panel-Portable-${version}.${ext}"}

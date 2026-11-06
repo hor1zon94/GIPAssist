@@ -99,7 +99,8 @@
     <button class="btn ghost" onclick="document.getElementById('projectInfoDialog').close()">Закрыть</button>
   </div>
 </dialog>
-    <div class="user-badge"><span class="dot"></span><span id="currentUser">—</span></div>
+    <button class="btn ghost" id="generalSettingsHeader" type="button">⚙️ Общие настройки</button>
+    <button class="user-badge" id="userHeader" type="button"><span class="dot"></span><span id="currentUser">—</span></button>
   </div>
 </header>
 <nav>
@@ -109,9 +110,8 @@
   <button data-tab="case">📁 Дело</button>
   <button data-tab="letters">✉️ Письма</button>
   <button data-tab="docs">📁 Документы</button>
-  <button data-tab="user">👤 Пользователь</button>
   <button data-tab="team">👥 Команда</button>
-  <button data-tab="settings">⚙️ Настройки</button>
+  <button data-tab="settings">⚙️ Настройки проекта</button>
 </nav>
 <main id="content"></main>
 
@@ -390,7 +390,7 @@ function taskCard(t){
     </div></div>`;
 }
 function fillUserSelect(sel,selectedId){
-  sel.innerHTML = state.users.map(u=>`<option value="${u.id}" ${u.id===selectedId?'selected':''}>${u.name}</option>`).join('');
+  sel.innerHTML = state.users.filter(u=>!activeProject()?.teamIds || activeProject().teamIds.includes(u.id) || u.id===selectedId).map(u=>`<option value="${u.id}" ${u.id===selectedId?'selected':''}>${safeText(u.name)}</option>`).join('');
 }
 function openTaskDialog(task=null){
   document.getElementById('taskDialogTitle').textContent = task?'Редактировать':'Новая задача';
@@ -754,18 +754,16 @@ tabs.docs = function(){
       <div id="folderList"></div>
     </div>`;
   document.getElementById('pickFolderBtn').onclick = async ()=>{
-    if(!window.showDirectoryPicker){ alert('Браузер не поддерживает выбор папки (нужен Chrome/Edge)'); return; }
     try {
-      const dir = await window.showDirectoryPicker();
-      const list = [];
-      for await (const entry of dir.values()){
-        if(entry.kind === 'file') list.push(entry.name);
-      }
+      let list;
+      if(window.gipApp) { list=await window.gipApp.pickFolder(); if(list===null)return; }
+      else if(window.showDirectoryPicker) { const dir=await window.showDirectoryPicker();list=[];for await(const entry of dir.values()) if(entry.kind==='file') list.push(entry.name); }
+      else throw new Error('Выбор папки недоступен');
       const box = document.getElementById('folderFiles');
       box.style.display = 'block';
-      document.getElementById('folderList').innerHTML = list.map(n=>`<div style="padding:4px 0">${n}</div>`).join('') || '<div class="empty">Папка пуста</div>';
+      document.getElementById('folderList').innerHTML = list.map(n=>`<div style="padding:4px 0">${safeText(n)}</div>`).join('') || '<div class="empty">Папка пуста</div>';
     } catch(err){
-      console.warn(err);
+      console.warn(err); if(err.name!=='AbortError') alert('Не удалось выбрать папку: '+err.message);
     }
   };
 };
@@ -786,10 +784,11 @@ tabs.user = function(){
 
 /* ============ TEAM ============ */
 tabs.team = function(){
+  const project=activeProject(); if(!project.teamIds) project.teamIds=state.users.map(u=>u.id);
   content.innerHTML = `
     <div class="toolbar">${can('invite')?'<button class="btn" id="inviteBtn">+ Пригласить</button>':''}</div>
     <div class="card" style="padding:0">
-      ${state.users.map(u=>`
+      ${state.users.filter(u=>project.teamIds.includes(u.id)).map(u=>`
         <div class="risk-row">
           <div><div style="font-weight:600">${u.name} ${u.id===state.currentUserId?'<span class="tag" style="margin-left:6px">вы</span>':''}</div>
             <div style="font-size:.8rem;color:var(--muted)">${u.email||'—'}</div>
@@ -810,8 +809,8 @@ tabs.team = function(){
 document.getElementById('inviteSaveBtn').onclick = ()=>{
   const name = document.getElementById('inviteName').value.trim();
   if(!name) return alert('Введите имя');
-  state.users.push({id:uid('u'),name,role:document.getElementById('inviteRole').value,email:'(локальный режим)',
-    executorName:'',executorTitle:'',executorPhone:'',executorEmail:''});
+  const newUser={id:uid('u'),name,role:document.getElementById('inviteRole').value,email:'(локальный режим)', executorName:'',executorTitle:'',executorPhone:'',executorEmail:''};
+  state.users.push(newUser);const project=activeProject();project.teamIds=project.teamIds||[state.currentUserId];project.teamIds.push(newUser.id);
   saveState(); document.getElementById('inviteDialog').close(); tabs.team();
 };
 function openProfile(id){
@@ -971,8 +970,8 @@ function openLetterDialog(letter=null){
   document.getElementById('lSubject').value = letter?.subject||'';
   document.getElementById('lSalutation').value = letter?.salutation||'';
   document.getElementById('lBody').value = letter?.body||'';
-  document.getElementById('lSignPos').value = letter?.signPosition||'Генеральный директор';
-  document.getElementById('lSignName').value = letter?.signName||'Д.Н. Сенков';
+  document.getElementById('lSignPos').value = letter?.signPosition||activeProject()?.signerTitle||'';
+  document.getElementById('lSignName').value = letter?.signName||activeProject()?.signerName||'';
   document.getElementById('lSignUseDefault').checked = !letter?.signatureImage;
   renderAttachments(letter?.attachments||[]);
   document.getElementById('lSignImgPreview').innerHTML = letter?.signatureImage?`<img src="${letter.signatureImage}" style="max-height:80px;border:1px solid var(--border);border-radius:6px">`:'';
@@ -1032,12 +1031,13 @@ document.getElementById('lSignImgClear').onclick = ()=>{
 };
 function fillExecutorSelect(selectedId){
   const sel = document.getElementById('lExecutor');
-  sel.innerHTML = state.users.map(u=>`<option value="${u.id}" ${u.id===selectedId?'selected':''}>${u.name}${u.executorName?` — ${u.executorName}`:''}</option>`).join('');
+  sel.innerHTML = state.users.filter(u=>!activeProject()?.teamIds || activeProject().teamIds.includes(u.id) || u.id===selectedId).map(u=>`<option value="${u.id}" ${u.id===selectedId?'selected':''}>${safeText(u.name)}${u.executorName?` — ${safeText(u.executorName)}`:''}</option>`).join('');
   sel.onchange = ()=>updateExecutorPreview(sel.value);
   updateExecutorPreview(sel.value);
 }
 function updateExecutorPreview(userId){
-  const u = userById(userId);
+  const base = userById(userId), p=activeProject();
+  const u = {...base, executorName:p?.executorName||base.executorName, executorTitle:p?.executorTitle||base.executorTitle, executorPhone:p?.executorPhone||base.executorPhone, executorEmail:p?.executorEmail||base.executorEmail};
   const box = document.getElementById('lExecutorPreview');
   if(!u.executorName){ box.innerHTML = `⚠ У сотрудника не заполнена карточка исполнителя — заполните в «Команде»`; return; }
   box.innerHTML = `<b>Будет подставлено (3 строки):</b><br>Исп.: ${u.executorTitle||''}${u.executorTitle?', ':''}${u.executorName}<br>Тел.: ${u.executorPhone||'—'}<br>E-mail: ${u.executorEmail||'—'}`;
@@ -1068,8 +1068,8 @@ function getLetterFromForm(){
     attachments: atts,
     signPosition: document.getElementById('lSignPos').value.trim(),
     signName: document.getElementById('lSignName').value.trim(),
-    signatureImage: document.getElementById('lSignUseDefault').checked ? state.defaultSignature : document.getElementById('letterDialog')._signImage,
-    executorSnapshot: {name:u.executorName, title:u.executorTitle, phone:u.executorPhone, email:u.executorEmail},
+    signatureImage: document.getElementById('lSignUseDefault').checked ? (activeProject()?.defaultSignature ?? state.defaultSignature) : document.getElementById('letterDialog')._signImage,
+    executorSnapshot: {name:activeProject()?.executorName || u.executorName, title:activeProject()?.executorTitle || u.executorTitle, phone:activeProject()?.executorPhone || u.executorPhone, email:activeProject()?.executorEmail || u.executorEmail},
   };
 }
 document.getElementById('letterSaveBtn').onclick = ()=>{
@@ -1106,7 +1106,7 @@ async function buildDocxBuffer(l){
     catch(err){ console.warn('header/footer apply failed', err); }
   }
   tplBuf = await splitExecutorIntoLines(tplBuf);
-  const signImg = l.signatureImage || state.defaultSignature;
+  const signImg = l.signatureImage || (activeProject()?.defaultSignature ?? state.defaultSignature);
   const attText = formatAttachmentsBlock(l.attachments);
   const data = {
     outNum: l.outNum||'', outDate: isoToRu(l.outDate),
@@ -1179,7 +1179,7 @@ tabs.settings = function(){
   const p = activeProject();
   content.innerHTML = `
     <div class="card">
-      <h3>Проект</h3>
+      <h3>Настройки проекта</h3>
       <label>Название</label><input id="setName" value="${p.name}">
       <div class="form-row">
         <div><label>Бюджет план (млн ₽)</label><input id="setBudgetPlan" type="number" value="${p.budgetPlan}"></div>
@@ -1191,26 +1191,20 @@ tabs.settings = function(){
       </div>
       <label>ГИП проекта</label>
       <select id="setGip">${state.users.filter(u=>u.role==='gip').map(u=>`<option value="${u.id}" ${u.id===p.gipId?'selected':''}>${u.name}</option>`).join('')}</select>
+      <label>ФИО ГИПа для писем</label><input id="setExecutorName" value="${safeText(p.executorName||'')}">
+      <label>Должность ГИПа</label><input id="setExecutorTitle" value="${safeText(p.executorTitle||'ГИП')}">
+      <label>Телефон ГИПа</label><input id="setExecutorPhone" value="${safeText(p.executorPhone||'')}">
+      <label>Почта ГИПа</label><input id="setExecutorEmail" value="${safeText(p.executorEmail||'')}">
+      <label>ФИО подписанта</label><input id="setSignerName" value="${safeText(p.signerName||'')}">
+      <label>Должность подписанта</label><input id="setSignerTitle" value="${safeText(p.signerTitle||'')}">
       <div class="actions">
-        <button class="btn ghost" id="exportBtn">Экспорт JSON</button>
-        <button class="btn ghost" id="importBtn">Импорт JSON</button>
         <button class="btn" id="saveSettingsBtn" ${can('editSettings')?'':'disabled'}>Сохранить</button>
       </div>
-      <input type="file" id="importFile" accept="application/json" style="display:none">
-    </div>
-    <div class="card" style="margin-top:16px">
-      <h3>Проекты</h3>
-      <div class="toolbar">${can('editProjects')?'<button class="btn" id="addProjectBtn">+ Новый проект</button>':''}</div>
-      ${state.projects.map(pr=>`
-        <div class="risk-row">
-          <div><b>${pr.name}</b><br><span style="font-size:.8rem;color:var(--muted)">ГИП: ${userById(pr.gipId).name}</span></div>
-          <div>${state.projects.length>1&&can('editProjects')?`<button class="btn ghost" style="padding:4px 10px;font-size:.75rem" data-del-project="${pr.id}">удалить</button>`:''}</div>
-        </div>`).join('')}
     </div>
     <div class="card" style="margin-top:16px">
       <h3>Подпись по умолчанию</h3>
       <input type="file" id="defaultSignFile" accept="image/png,image/jpeg">
-      <div id="defaultSignPreview" style="margin-top:8px">${state.defaultSignature?`<img src="${state.defaultSignature}" style="max-height:80px;border:1px solid var(--border);border-radius:6px">`:'<span class="hint">не задана</span>'}</div>
+      <div id="defaultSignPreview" style="margin-top:8px">${p.defaultSignature?`<img src="${p.defaultSignature}" style="max-height:80px;border:1px solid var(--border);border-radius:6px">`:'<span class="hint">не задана</span>'}</div>
       <button class="btn ghost" id="clearDefaultSign" style="margin-top:8px">Очистить</button>
     </div>`;
   document.getElementById('saveSettingsBtn').onclick = ()=>{
@@ -1220,8 +1214,21 @@ tabs.settings = function(){
     p.schedulePlan = +document.getElementById('setSchedulePlan').value;
     p.scheduleFact = +document.getElementById('setScheduleFact').value;
     p.gipId = document.getElementById('setGip').value;
+    for(const [key,id] of [['executorName','setExecutorName'],['executorTitle','setExecutorTitle'],['executorPhone','setExecutorPhone'],['executorEmail','setExecutorEmail'],['signerName','setSignerName'],['signerTitle','setSignerTitle']]) p[key]=document.getElementById(id).value.trim();
     saveState(); alert('Сохранено'); tabs.settings();
   };
+  document.getElementById('defaultSignFile').onchange = async (e)=>{
+    const f = e.target.files[0]; if(!f) return;
+    p.defaultSignature = await fileToBase64(f);
+    saveState(); tabs.settings();
+  };
+  document.getElementById('clearDefaultSign').onclick = ()=>{
+    p.defaultSignature = null; saveState(); tabs.settings();
+  };
+};
+
+tabs.generalSettings = function(){
+  content.innerHTML = `<div class="card"><h3>Общие настройки</h3><p>Резервная копия содержит проекты и документы всех объектов, а также шаблоны писем.</p><button class="btn ghost" id="exportBtn">Экспорт JSON</button> <button class="btn ghost" id="importBtn">Импорт JSON</button><input type="file" id="importFile" accept="application/json" style="display:none"></div>`;
   document.getElementById('exportBtn').onclick = ()=>{
     const backup = {format:'gip-panel-backup', version:1, state, letterTemplateB64:localStorage.getItem('letterTemplateB64'), headerFooterB64:localStorage.getItem('headerFooterB64')};
     const blob = new Blob([JSON.stringify(backup,null,2)],{type:'application/json'});
@@ -1233,16 +1240,8 @@ tabs.settings = function(){
     try{ const imported=JSON.parse(await f.text()); const next=imported.format==='gip-panel-backup'?imported.state:imported; if(!next || !Array.isArray(next.projects) || !Array.isArray(next.users) || !Array.isArray(next.tasks) || !Array.isArray(next.risks) || !Array.isArray(next.letters) || !Array.isArray(next.docs) || !next.calendarPlans || !next.tzFindings) throw new Error('Файл не похож на резервную копию панели'); if(!next.projectInfo) next.projectInfo=next.rojectInfo||{}; if(imported.format==='gip-panel-backup'){ for(const key of ['letterTemplateB64','headerFooterB64']){ if(imported[key]===null || imported[key]===undefined) localStorage.removeItem(key); else if(typeof imported[key]==='string') localStorage.setItem(key,imported[key]); else throw new Error('Некорректный шаблон письма'); }} state=next; saveState(); renderAll(); }
     catch(err){ alert('Ошибка: '+err.message); }
   };
-  if(can('editProjects')) document.getElementById('addProjectBtn').onclick = createProjectDialog;
-  document.getElementById('defaultSignFile').onchange = async (e)=>{
-    const f = e.target.files[0]; if(!f) return;
-    state.defaultSignature = await fileToBase64(f);
-    saveState(); tabs.settings();
   };
-  document.getElementById('clearDefaultSign').onclick = ()=>{
-    state.defaultSignature = null; saveState(); tabs.settings();
-  };
-};
+document.getElementById('generalSettingsHeader').onclick = ()=>{document.querySelectorAll('nav button').forEach(b=>b.classList.remove('active'));tabs.generalSettings();};
 
 /* ============ ОБЩИЕ ОБРАБОТЧИКИ ============ */
 content.addEventListener('click',e=>{
@@ -1254,9 +1253,7 @@ content.addEventListener('click',e=>{
   if(d.openProfile){ openProfile(d.openProfile); }
   if(d.removeUser){
     if(!confirm('Удалить сотрудника?')) return;
-    state.users = state.users.filter(u=>u.id!==d.removeUser);
-    state.tasks.forEach(t=>{ if(t.assignee===d.removeUser) t.assignee = state.currentUserId; });
-    state.risks.forEach(r=>{ if(r.owner===d.removeUser) r.owner = state.currentUserId; });
+    const project=activeProject();project.teamIds=(project.teamIds||[]).filter(id=>id!==d.removeUser);
     saveState(); tabs.team();
   }
   if(d.delProject){
@@ -1308,7 +1305,7 @@ async function readCaseFile(f){
 function guessProject(text){
   const lines=text.split(/\n+/).map(x=>x.trim()).filter(Boolean);
   const lineAfter=(pattern)=>{let i=lines.findIndex(x=>pattern.test(x));if(i<0)return '';let tail=lines[i].replace(pattern,'').replace(/^\s*[:\-–]+\s*/,'').trim();return (tail||lines[i+1]||'').slice(0,300);};
-  const name=lineAfter(/^(?:наименование объекта(?: строительства)?|наименование объекта проектирования)\s*/i)||((text.match(/(?:по объекту|по лоту)\s*[:：]\s*[«"“]?([^\n»”"]{8,200})/i)||[])[1]||'').trim() || lineAfter(/^задание на проектирование\s*$/i);
+  const name=((text.match(/по\s+объекту\s*[:：]?\s*[«"“]?([^\n»”"]{6,250})/i)||[])[1]||'').trim() || lineAfter(/^(?:наименование объекта(?: строительства)?|наименование объекта проектирования)\s*/i)||((text.match(/(?:по объекту|по лоту)\s*[:：]\s*[«"“]?([^\n»”"]{8,200})/i)||[])[1]||'').trim() || lineAfter(/^задание на проектирование\s*$/i);
   const customer=lineAfter(/^заказчик(?:\s*[:：]\s*|\s*$)/i);
   const kind=(text.match(/техническо(?:е|го) перевооружение|реконструкци[яию]|капитальн(?:ый|ого) ремонт|новое строительство/i)||[])[0]||'';
   const exp=(text.match(/[^\n.]{0,80}(?:экспертиз[аы]|экспертизы)[^\n.]{0,100}/ig)||[]).slice(0,3).join('; ');
@@ -1319,16 +1316,18 @@ async function createProjectDialog(){
  const d=document.createElement('dialog');d.className='wide';d.innerHTML=`<h2>Создать проект</h2><p>Заполните поля или загрузите ТЗ. Проверьте найденные данные перед сохранением.</p><label>Задание на проектирование (DOCX, PDF, TXT)</label><input type="file" id="newProjectFile" accept=".docx,.pdf,.txt"><p id="newProjectStatus"></p><label>Наименование объекта</label><input id="newObject"><label>Краткое название проекта</label><input id="newShort"><label>Заказчик</label><input id="newCustomer"><label>Вид строительства</label><select id="newKind"><option></option><option>Новое строительство</option><option>Реконструкция</option><option>Капитальный ремонт</option><option>Техническое перевооружение</option></select><label>Суть проекта</label><textarea id="newSummary"></textarea><label>Экспертизы</label><textarea id="newExpertise"></textarea><label>Разделы документации (ПД, РД, ОТР, ИИ)</label><input id="newSections"><div class="actions"><button class="btn ghost" id="newCancel">Отмена</button><button class="btn" id="newSave">Создать</button></div>`;document.body.appendChild(d);let imported=null;
  d.querySelector('#newCancel').onclick=()=>d.close();d.onclose=()=>d.remove();
  d.querySelector('#newProjectFile').onchange=async e=>{const f=e.target.files[0];if(!f)return;try{d.querySelector('#newProjectStatus').textContent='Чтение документа…';const text=await readCaseFile(f);if(!text.trim())throw new Error('Текст не найден: возможно, документ является сканом');imported={id:uid('f'),name:f.name,text};const x=guessProject(text);for(const [key,id] of [['name','newObject'],['customer','newCustomer'],['exp','newExpertise'],['sections','newSections']])if(x[key])d.querySelector('#'+id).value=x[key];if(x.kind){let opts=[...d.querySelector('#newKind').options];let o=opts.find(o=>o.value.toLowerCase().startsWith(x.kind.toLowerCase().slice(0,8)));if(o)d.querySelector('#newKind').value=o.value;}d.querySelector('#newProjectStatus').textContent='Текст прочитан. Проверьте предлагаемые поля.';}catch(err){imported=null;d.querySelector('#newProjectStatus').textContent='Ошибка: '+err.message;}};
- d.querySelector('#newSave').onclick=()=>{let object=d.querySelector('#newObject').value.trim(),short=d.querySelector('#newShort').value.trim();if(!object&&!short)return alert('Введите наименование объекта или краткое название');const id=uid('p');state.projects.push({id,name:short||object,objectName:object,customer:d.querySelector('#newCustomer').value.trim(),constructionType:d.querySelector('#newKind').value,summary:d.querySelector('#newSummary').value.trim(),expertise:d.querySelector('#newExpertise').value.trim(),documentation:d.querySelector('#newSections').value.trim(),budgetPlan:0,budgetFact:0,schedulePlan:100,scheduleFact:0,gipId:state.currentUserId});state.activeProjectId=id;state.caseFiles=state.caseFiles||{};state.caseFiles[id]={tz:imported?[imported]:[],plan:[],contract:[],agreements:[]};try{saveState();}catch(e){state.projects.pop();delete state.caseFiles[id];state.activeProjectId=state.projects[0]?.id||null;return alert('Не удалось сохранить: '+e.message);}d.close();renderAll();};d.showModal();
+ d.querySelector('#newSave').onclick=()=>{let object=d.querySelector('#newObject').value.trim(),short=d.querySelector('#newShort').value.trim();if(!object&&!short)return alert('Введите наименование объекта или краткое название');const id=uid('p');state.projects.push({id,teamIds:[state.currentUserId],name:short||object,objectName:object,customer:d.querySelector('#newCustomer').value.trim(),constructionType:d.querySelector('#newKind').value,summary:d.querySelector('#newSummary').value.trim(),expertise:d.querySelector('#newExpertise').value.trim(),documentation:d.querySelector('#newSections').value.trim(),budgetPlan:0,budgetFact:0,schedulePlan:100,scheduleFact:0,gipId:state.currentUserId});state.activeProjectId=id;state.caseFiles=state.caseFiles||{};state.caseFiles[id]={tz:imported?[imported]:[],plan:[],contract:[],agreements:[]};try{saveState();}catch(e){state.projects.pop();delete state.caseFiles[id];state.activeProjectId=state.projects[0]?.id||null;return alert('Не удалось сохранить: '+e.message);}d.close();renderAll();};d.showModal();
 }
 let caseTab='tz';
 tabs.case=function(){
  const p=activeProject();state.caseFiles=state.caseFiles||{};const files=state.caseFiles[p.id]||(state.caseFiles[p.id]={tz:[],plan:[],contract:[],agreements:[]});const names={tz:'Задание на проектирование',plan:'Календарный план',contract:'Договор',agreements:'Дополнительные соглашения'};
- content.innerHTML=`<div class="toolbar">${Object.entries(names).map(([k,v])=>`<button class="btn ${caseTab===k?'':'ghost'}" data-case-tab="${k}">${v}</button>`).join('')}</div><div class="card"><label>Общий поиск по делу</label><input id="caseGlobal" placeholder="Введите текст"><div id="caseGlobalResult"></div></div><div class="card" style="margin-top:12px"><h3>${names[caseTab]}</h3><input type="file" id="caseUpload" accept=".docx,.pdf,.txt" ${caseTab==='agreements'?'multiple':''}><p>Поддерживаются DOCX, PDF с текстом и TXT. Сканированные документы требуют распознавания текста.</p><label>Поиск в этом разделе</label><input id="caseLocal" placeholder="Введите текст"><div id="caseList"></div>${caseTab==='plan'?'<button class="btn ghost" id="casePlan">Открыть редактор календарного плана</button>':''}</div>`;
+ content.innerHTML=`<div class="toolbar">${Object.entries(names).map(([k,v])=>`<button class="btn ${caseTab===k?'':'ghost'}" data-case-tab="${k}">${v}</button>`).join('')}</div><div class="card"><label>Общий поиск по делу</label><input id="caseGlobal" placeholder="Введите текст"><div id="caseGlobalResult"></div></div><div class="card" style="margin-top:12px"><h3>${names[caseTab]}</h3><input type="file" id="caseUpload" accept=".docx,.pdf,.txt" ${caseTab==='agreements'?'multiple':''}><p>Поддерживаются DOCX, PDF с текстом и TXT. Сканированные документы требуют распознавания текста.</p><label>Поиск в этом разделе</label><input id="caseLocal" placeholder="Введите текст"><div id="caseLocalResult"></div><div id="caseList"></div>${caseTab==='plan'?'<button class="btn ghost" id="casePlan">Открыть редактор календарного плана</button>':''}</div>`;
  content.querySelectorAll('[data-case-tab]').forEach(b=>b.onclick=()=>{caseTab=b.dataset.caseTab;tabs.case();});
- const render=()=>{const q=document.getElementById('caseLocal').value.toLowerCase();document.getElementById('caseList').innerHTML=(files[caseTab]||[]).map(f=>{let text=f.text||'';let pos=q?text.toLowerCase().indexOf(q):-1;return `<div class="card"><b>${safeText(f.name)}</b> <button class="btn ghost" data-case-remove="${f.id}">Удалить</button>${q?(pos<0?'<p>Совпадений нет</p>':`<p>Первое совпадение: ${safeText(text.slice(Math.max(0,pos-100),pos+q.length+100))}</p>`):''}<pre style="white-space:pre-wrap;max-height:420px;overflow:auto;font:inherit">${safeText(text)}</pre></div>`;}).join('')||'<p>Документы не загружены</p>';};
- document.getElementById('caseLocal').oninput=render;render();
- document.getElementById('caseGlobal').oninput=e=>{let q=e.target.value.trim().toLowerCase();let out=[];if(q)for(const [k,arr] of Object.entries(files))for(const f of arr){let i=f.text.toLowerCase().indexOf(q);if(i>=0)out.push(`<p><b>${safeText(names[k])}: ${safeText(f.name)}</b> — ${safeText(f.text.slice(Math.max(0,i-80),i+q.length+80))}</p>`);}document.getElementById('caseGlobalResult').innerHTML=q?(out.join('')||'Ничего не найдено'):'';};
+ const render=()=>{document.getElementById('caseList').innerHTML=(files[caseTab]||[]).map(f=>`<div class="card"><b>${safeText(f.name)}</b> <button class="btn ghost" data-case-remove="${f.id}">Удалить</button><pre data-case-file="${safeText(f.id)}" style="white-space:pre-wrap;max-height:420px;overflow:auto;font:inherit">${safeText(f.text||'')}</pre></div>`).join('')||'<p>Документы не загружены</p>';};
+ const findMatches=(q,global)=>{let found=[];if(!q)return found;for(const [k,arr] of Object.entries(files)){if(!global&&k!==caseTab)continue;for(const f of arr){let source=f.text||'',low=source.toLowerCase(),needle=q.toLowerCase(),pos=0;while((pos=low.indexOf(needle,pos))!==-1){found.push({k,id:f.id,pos});pos+=needle.length;}}}return found;};
+ const showMatch=(item,q)=>{caseTab=item.k;tabs.case();let input=document.getElementById('caseLocal');input.value=q;render();let pre=[...document.querySelectorAll('[data-case-file]')].find(e=>e.dataset.caseFile===item.id);if(!pre)return;let f=files[item.k].find(x=>x.id===item.id),t=f.text;pre.innerHTML=safeText(t.slice(0,item.pos))+'<mark id="currentMatch">'+safeText(t.slice(item.pos,item.pos+q.length))+'</mark>'+safeText(t.slice(item.pos+q.length));document.getElementById('currentMatch').scrollIntoView({block:'center'});};
+ const wire=(inputId,resultId,global)=>{let current=0;const input=document.getElementById(inputId),result=document.getElementById(resultId);function update(){const q=input.value.trim(),found=findMatches(q,global);if(current>=found.length)current=0;result.innerHTML=q?`<span>Найдено: ${found.length}${found.length?' · '+(current+1)+' из '+found.length:''}</span> ${found.length?'<button class="btn ghost" data-prev>←</button><button class="btn ghost" data-next>→</button><button class="btn ghost" data-go>Перейти</button>':''}`:'';result.querySelector('[data-prev]')?.addEventListener('click',()=>{current=(current-1+found.length)%found.length;update();});result.querySelector('[data-next]')?.addEventListener('click',()=>{current=(current+1)%found.length;update();});result.querySelector('[data-go]')?.addEventListener('click',()=>showMatch(found[current],q));}input.oninput=()=>{current=0;update();};};
+ render();wire('caseLocal','caseLocalResult',false);wire('caseGlobal','caseGlobalResult',true);
  document.getElementById('caseUpload').onchange=async e=>{for(const f of e.target.files){try{let text=await readCaseFile(f);if(!text.trim())throw Error('Текст не извлечён');const item={id:uid('f'),name:f.name,text};let old=[...files[caseTab]];files[caseTab]=caseTab==='agreements'?[...old,item]:[item];try{saveState();}catch(err){files[caseTab]=old;throw err;}}catch(err){alert('Не удалось загрузить '+f.name+': '+err.message);}}tabs.case();};
  content.querySelector('#caseList').onclick=e=>{const id=e.target.dataset.caseRemove;if(!id)return;if(!confirm('Удалить документ из дела?'))return;files[caseTab]=files[caseTab].filter(f=>f.id!==id);saveState();tabs.case();};if(caseTab==='plan')document.getElementById('casePlan').onclick=()=>tabs.plan();
 };
@@ -1367,6 +1366,7 @@ function openProjectInfo(){
   }
   document.getElementById('projectInfoDialog').showModal();
 }
+document.getElementById('userHeader').onclick = ()=>{document.querySelectorAll('nav button').forEach(b=>b.classList.remove('active'));tabs.user();};
 document.getElementById('projectInfoBtn').onclick = createProjectDialog;
 renderAll();
 </script>

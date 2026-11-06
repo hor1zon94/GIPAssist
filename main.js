@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, protocol, net, dialog, shell } = require('electron');
+const { app, BrowserWindow, protocol, net, dialog, shell, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url');
@@ -36,7 +36,8 @@ app.whenReady().then(() => {
     const file = url.host === 'app' && files[url.pathname];
     return file ? net.fetch(pathToFileURL(path.join(__dirname, 'app', file)).href) : new Response('Not found', { status: 404 });
   });
-  window = new BrowserWindow({ width: 1360, height: 880, minWidth: 900, minHeight: 600, title: 'Панель ГИП', webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true } });
+  ipcMain.handle('pick-folder', async () => { const result = await dialog.showOpenDialog(window, { properties: ['openDirectory'] }); if (result.canceled || !result.filePaths[0]) return null; const entries = await fs.promises.readdir(result.filePaths[0], { withFileTypes: true }); return entries.filter(e => e.isFile()).map(e => e.name); });
+  window = new BrowserWindow({ width: 1360, height: 880, minWidth: 900, minHeight: 600, title: 'Панель ГИП', webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, preload: path.join(__dirname, 'preload.js') } });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', (event, url) => { if (!url.startsWith('gip://app/')) event.preventDefault(); });
   window.loadURL('gip://app/index.html');
